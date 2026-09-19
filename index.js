@@ -10,7 +10,6 @@ const image = require("./middleware/image");
 const media = require("./middleware/media");
 const http = require('http');
 const compression = require('compression');
-
 const app = express();
 const wispprefix = "/api/membercount/";
 const bareprefix = "/api/imageupload/";
@@ -32,6 +31,26 @@ app.use(
       }
       return compression.filter(req, res);
   }})
+);
+app.use(
+  "/scramjet",
+  express.static(path.join(packageDir("@mercuryworkshop/scramjet"), "dist"))
+);
+app.use(
+  "/baremux",
+  express.static(path.join(packageDir("@mercuryworkshop/bare-mux"), "dist"))
+);
+app.use(
+  "/epoxy",
+  express.static(
+    path.join(packageDir("@mercuryworkshop/epoxy-transport"), "dist")
+  )
+);
+app.use(
+  "/libcurl",
+  express.static(
+    path.join(packageDir("@mercuryworkshop/libcurl-transport"), "dist")
+  )
 );
 app.get("/api/yt/:id/audio", youtube("audio"));
 app.get("/api/yt/:id/video", youtube("video"));

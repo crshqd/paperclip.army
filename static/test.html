@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scramjet</title>
+  <style>
+    html, body, iframe {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      border: 0;
+      overflow: hidden;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/eruda/3.4.3/eruda.min.js" integrity="sha512-cDmB70h28kl47NuDUcO3/hqJ29T+Gxue9DA6hoENF9RPGN/AZuyI94ATk5MN9VXTiuTHw2v3iVT9sXLzMMF1sQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script>eruda.init();</script>
+</head>
+<body>
+  <iframe id="frame" allow="fullscreen"></iframe>
+
+  <script src="/p/scram/all.js"></script>
+  <script src="/p/bare/index.js"></script>
+
+  <script>
+    const frame = document.getElementById("frame");
+    const secure = location.protocol === "https:";
+
+    const wisp = `${secure ? "wss" : "ws"}://${location.host}/api/membercount`;
+    const bare = `${secure ? "https" : "http"}://${location.host}/api/imageupload`;
+
+    function encode(x) {
+    const chars = Array.from(x);
+    let step1 = chars
+        .map((char, i) => {
+        let temp = char.charCodeAt(0) ^ 54;
+        temp += i;
+        temp -= 32;
+        temp = ((temp % 256) + 256) % 256; 
+        return temp.toString(2).padStart(8, '0');
+        })
+        .join('');
+    const bytes = step1.match(/.{1,8}/g) || [];
+    const resultStr = bytes
+        .map(byteStr => String.fromCharCode(parseInt(byteStr, 2)))
+        .join('');
+    return encodeURI(resultStr);
+    }
+
+    function decode(encodedStr) {
+    const decodedURI = decodeURI(encodedStr);
+    const chars = Array.from(decodedURI);
+    
+    // Map characters directly into a unified binary string
+    const binaryStr = chars
+        .map(char => char.charCodeAt(0).toString(2).padStart(8, '0'))
+        .join('');
+    
+    const bytes = binaryStr.match(/.{1,8}/g) || [];
+    
+    // Reconstruct using array mapping to avoid standard loop triggers
+    const result = bytes
+        .map((byteStr, byteIndex) => {
+        let temp = parseInt(byteStr, 2);
+        temp += 32;
+        temp -= byteIndex;
+        temp = ((temp % 256) + 256) % 256;
+        return String.fromCharCode(temp ^ 54);
+        })
+        .join(''); 
+    
+    return result;
+    }
+
+    const scramjet = new ScramjetController({
+      prefix: "/sj/",
+      files: {
+        wasm: "/p/scram/wasm.wasm",
+        all: "/p/scram/all.js",
+        sync: "/p/scram/sync.js"
+      },
+      codec: {
+        encode,
+        decode
+      }
+    });
+
+    const bareMux = new BareMuxConnection("/p/bare/worker.js");
+
+    async function useWisp() {
+      await bareMux.setTransport("/p/epoxy/index.mjs", [
+        { wisp }
+      ]);
+    }
+
+    async function useBare() {
+      await bareMux.setTransport("/p/libcurl/index.mjs", [
+        { bare }
+      ]);
+    }
+
+    async function loadTarget(url) {
+      await useWisp();
+      frame.src = scramjet.encode(url);
+
+      // If the Wisp page reports an iframe error, retry through Bare.
+      frame.addEventListener("error", async function fallback() {
+        frame.removeEventListener("error", fallback);
+
+        try {
+          await useBare();
+          frame.src = scramjet.encode(url);
+        } catch (error) {
+          console.error("Bare fallback failed:", error);
+        }
+      }, { once: true });
+    }
+
+    async function start() {
+      await navigator.serviceWorker.register("/sw.js", {
+        scope: "/"
+      });
+
+      await scramjet.init();
+
+      const params = new URLSearchParams(location.search);
+      let url = params.get("url");
+
+      if (!url) {
+        frame.srcdoc = "<h3 style='font-family:sans-serif;text-align:center'>Missing ?url= parameter</h3>";
+        return;
+      }
+
+      url = decodeURIComponent(url);
+
+      if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) {
+        url = `https://${url}`;
+      }
+
+      try {
+        new URL(url);
+      } catch {
+        frame.srcdoc = "<h3 style='font-family:sans-serif;text-align:center'>Invalid URL</h3>";
+        return;
+      }
+
+      try {
+        await loadTarget(url);
+      } catch (wispError) {
+        console.warn("Wisp failed; using Bare:", wispError);
+
+        await useBare();
+        frame.src = scramjet.encode(url);
+      }
+    }
+
+    start().catch(console.error);
+  </script>
+</body>
+</html>
