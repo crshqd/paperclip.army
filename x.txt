@@ -1,0 +1,37 @@
+function encode(x) {
+  const chars = Array.from(x);
+  let step1 = chars
+    .map((char, i) => {
+      let temp = char.charCodeAt(0) ^ 54;
+      temp += i;
+      temp -= 32;
+      temp = ((temp % 256) + 256) % 256; 
+      return temp.toString(2).padStart(8, '0');
+    })
+    .join('');
+  const bytes = step1.match(/.{1,8}/g) || [];
+  const resultStr = bytes
+    .map(byteStr => String.fromCharCode(parseInt(byteStr, 2)))
+    .join('');
+  return encodeURI(resultStr);
+}
+function decode(encodedStr) {
+  const decodedURI = decodeURI(encodedStr);
+  const chars = Array.from(decodedURI);
+  const binaryStr = chars
+    .map(char => char.charCodeAt(0).toString(2).padStart(8, '0'))
+    .join('');
+  
+  const bytes = binaryStr.match(/.{1,8}/g) || [];
+  const result = bytes
+    .map((byteStr, byteIndex) => {
+      let temp = parseInt(byteStr, 2);
+      temp += 32;
+      temp -= byteIndex;
+      temp = ((temp % 256) + 256) % 256;
+      return String.fromCharCode(temp ^ 54);
+    })
+    .join(''); 
+  
+  return result;
+}
