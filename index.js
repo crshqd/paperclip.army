@@ -83,7 +83,7 @@ app.use((req, res) => {
   res.status(404).send(req.path+" not found");
 });
 
-server.listen(port, () => {
+server.listen(port, "0.0.0.0", () => {
   console.log("Server running on http://localhost:"+port);
   console.log("Wisp running on ws://localhost:"+port+""+wispprefix);
   console.log("Bare running on http://localhost:"+port+bareprefix)
