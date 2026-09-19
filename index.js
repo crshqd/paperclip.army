@@ -2,6 +2,7 @@ const express = require("express");
 const { spawn } = require("child_process");
 const { server: wisp } = require("@mercuryworkshop/wisp-js/server");
 const { createBareServer } = require("@tomphttp/bare-server-node");
+const path = require("path");
 const m3u8 = require("./middleware/m3u8");
 const youtube = require("./middleware/youtube");
 const youtubeApi = require("./middleware/youtubeapi");
@@ -22,6 +23,7 @@ const server = http.createServer((req, res) => {
     }
     app(req, res);
 });
+
 app.use(express.static("./static/"));
 app.use(
   compression({ filter: (req, res) => {
@@ -32,24 +34,32 @@ app.use(
       return compression.filter(req, res);
   }})
 );
+
 app.use(
-  "/scramjet",
-  express.static(path.join(packageDir("@mercuryworkshop/scramjet"), "dist"))
-);
-app.use(
-  "/baremux",
-  express.static(path.join(packageDir("@mercuryworkshop/bare-mux"), "dist"))
-);
-app.use(
-  "/epoxy",
+  "/p/scram",
   express.static(
-    path.join(packageDir("@mercuryworkshop/epoxy-transport"), "dist")
+    path.join(
+      __dirname,
+      "node_modules/@mercuryworkshop/scramjet/dist"
+    )
   )
 );
 app.use(
-  "/libcurl",
+  "/p/bare",
   express.static(
-    path.join(packageDir("@mercuryworkshop/libcurl-transport"), "dist")
+    path.dirname(require.resolve("@mercuryworkshop/bare-mux"))
+  )
+);
+app.use(
+  "/p/epoxy",
+  express.static(
+    path.dirname(require.resolve("@mercuryworkshop/epoxy-transport"))
+  )
+);
+app.use(
+  "/p/libcurl",
+  express.static(
+    path.dirname(require.resolve("@mercuryworkshop/libcurl-transport"))
   )
 );
 app.get("/api/yt/:id/audio", youtube("audio"));

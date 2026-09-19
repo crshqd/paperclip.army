@@ -1,4 +1,4 @@
-importScripts("/p/scram/all.js");
+importScripts("/p/scram/scramjet.all.js");
 
 const scramjet = new ScramjetServiceWorker();
 

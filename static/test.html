@@ -19,10 +19,9 @@
 <body>
   <iframe id="frame" allow="fullscreen"></iframe>
 
-  <script src="/p/scram/all.js"></script>
-  <script src="/p/bare/index.js"></script>
-
-  <script>
+  <script type="module">
+    import { ScramjetController } from "/p/scram/scramjet.bundle.js";
+    import { BareMuxConnection } from "/p/bare/index.mjs";
     const frame = document.getElementById("frame");
     const secure = location.protocol === "https:";
 
@@ -75,9 +74,9 @@
     const scramjet = new ScramjetController({
       prefix: "/sj/",
       files: {
-        wasm: "/p/scram/wasm.wasm",
-        all: "/p/scram/all.js",
-        sync: "/p/scram/sync.js"
+        wasm: "/p/scram/scramjet.wasm.wasm",
+        all: "/p/scram/scramjet.all.js",
+        sync: "/p/scram/scramjet.sync.js"
       },
       codec: {
         encode,
