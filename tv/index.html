@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>tv</title>
+        <link rel="stylesheet" href="style.css" />
+    </head>
+    <body>
+        <h1>TV</h1>
+        <p>Choose a country below: <br>
+            <select id="country">
+                <option value="">-- Choose an option --</option>
+                <hr>
+            </select><br><br>
+            <button onclick="continuee()">Continue</button>
+        </p>
+        <script src="js/iptv-api.js"></script>
+        <script>
+            const iptv = new IPTVClient({
+                cacheTtl: 60 * 60 * 1000
+            });
+            (async () => {
+                let countries = await iptv.getCountries();
+                let tempelem = document.createElement("option");
+                tempelem.value = "ALL";
+                tempelem.textContent = `Global 🌐`;
+                document.getElementById("country").appendChild(tempelem);
+                for (let i = 0; i < countries.length; i++) {
+                    let tempelem = document.createElement("option");
+                    tempelem.value = countries[i].code;
+                    tempelem.textContent = `${countries[i].name} ${countries[i].flag}`;
+                    document.getElementById("country").appendChild(tempelem);
+                }
+            })();
+            function continuee() {
+                let country = document.getElementById("country").value;
+                location.href = "./country.html?c=" + country;
+            }
+        </script>
+    </body>
+</html>

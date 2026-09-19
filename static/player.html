@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>video player</title>
+  <style>
+    #video { width:700px; height:393.75px; position:fixed; top:0; left:0; }
+    #video.loading { background:url(loading.svg); background-size:contain; }
+    #vid { width:700px; padding:0; margin:0; display:block; }
+    .bottom { position:absolute; left:20px; right:20px; bottom:15px; height:58px; padding:8px 12px; box-sizing:border-box; background:rgba(20,20,20,.82); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); border-radius:10px; font-family:sans-serif; opacity:0; transition:opacity .25s ease; }
+    #video:hover .bottom { opacity:1; }
+    #progressbar { display:block; width:100%; height:5px; margin:0 0 8px; appearance:none; -webkit-appearance:none; background:linear-gradient(to right, white var(--progress,0%), rgba(255,255,255,.3) var(--progress,0%)); border-radius:10px; cursor:pointer; }
+    #progressbar::-webkit-slider-thumb { appearance:none; -webkit-appearance:none; width:12px; height:12px; border:none; border-radius:50%; background:white; cursor:pointer; }
+    #progressbar::-moz-range-thumb { width:12px; height:12px; border:none; border-radius:50%; background:white; cursor:pointer; }
+    .group { display:flex; align-items:center; height:30px; gap:14px; }
+    .button { position:static; display:flex; align-items:center; justify-content:center; width:30px; height:30px; border:0; padding:0; margin:0; color:white; background:transparent; border-radius:6px; cursor:pointer; transition:background .15s; }
+    .button:hover { background:rgba(255,255,255,.15); }
+    .button i { width:20px; height:20px; }
+    #duration { color:rgba(255,255,255,.9); padding:0; font-size:14px; user-select:none; }
+    .volume { display:flex; align-items:center; gap:8px; color:white; }
+    #volume { width:80px; height:5px; appearance:none; -webkit-appearance:none; background:linear-gradient(to right, white calc(var(--volume,100%) * 1%), rgba(255,255,255,.3) calc(var(--volume,100%) * 1%)); border-radius:10px; cursor:pointer; }
+    #volume::-webkit-slider-thumb { appearance:none; width:10px; height:10px; border:none; border-radius:50%; background:white; }
+    #volume::-moz-range-thumb { width:10px; height:10px; border:none; border-radius:50%; background:white; }
+    #audio { display:none; }
+  </style>
+</head>
+<body>
+  <div id="video" class="loading">
+    <video id="vid" playsinline preload="auto" disablePictureInPicture disableRemotePlayback></video>
+    <audio id="audio" preload="auto" disableRemotePlayback></audio>
+    <div class="bottom">
+      <input type="range" id="progressbar" value="0" max="100" step="0.05">
+      <div class="group">
+        <button onclick="playpause()" id="playpause" class="button"><i data-lucide="play"></i></button>
+        <div class="volume">
+          <i data-lucide="volume-2" id="volume-icon"></i>
+          <input type="range" id="volume" min="0" max="1" step="0.01" value="1">
+        </div>
+        <span id="duration">Loading...</span>
+      </div>
+    </div>
+  </div>
+  <script src="./lib/lucide.js"></script>
+  <script>
+    lucide.createIcons();
+
+    const video = document.getElementById("vid");
+    const audio = document.getElementById("audio");
+    const playpause2 = document.getElementById("playpause");
+    const duration = document.getElementById("duration");
+    const progressbar = document.getElementById("progressbar");
+    const volume = document.getElementById("volume");
+    const videoContainer = document.getElementById("video");
+
+    const videoId = new URLSearchParams(location.search).get("id");
+
+    // Video is the master clock. Audio follows it.
+    const MIN_BUFFER = 1.0;
+    const MAX_DRIFT = 0.30;
+
+    let seeking = false;
+    let draggingProgress = false;
+    let syncTimer = null;
+    let playRequest = null;
+
+    // =========================
+    // Loading / buffering
+    // =========================
+
+    function bufferedAhead(media) {
+      if (!media.buffered.length || !Number.isFinite(media.currentTime)) {
+        return 0;
+      }
+
+      for (let i = 0; i < media.buffered.length; i++) {
+        const start = media.buffered.start(i);
+        const end = media.buffered.end(i);
+
+        if (start <= media.currentTime && end >= media.currentTime) {
+          return end - media.currentTime;
+        }
+      }
+
+      return 0;
+    }
+
+    function hasEnoughBuffer() {
+      return (
+        video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA &&
+        audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA &&
+        bufferedAhead(video) >= MIN_BUFFER &&
+        bufferedAhead(audio) >= MIN_BUFFER
+      );
+    }
+
+    function waitForBuffer(timeout = 15000) {
+      if (hasEnoughBuffer()) {
+        return Promise.resolve(true);
+      }
+
+      return new Promise(resolve => {
+        let finished = false;
+
+        const cleanup = () => {
+          video.removeEventListener("progress", check);
+          audio.removeEventListener("progress", check);
+          video.removeEventListener("canplay", check);
+          audio.removeEventListener("canplay", check);
+          video.removeEventListener("canplaythrough", check);
+          audio.removeEventListener("canplaythrough", check);
+          video.removeEventListener("loadeddata", check);
+          audio.removeEventListener("loadeddata", check);
+          clearInterval(timer);
+          clearTimeout(timeoutTimer);
+        };
+
+        const finish = result => {
+          if (finished) return;
+          finished = true;
+          cleanup();
+          resolve(result);
+        };
+
+        const check = () => {
+          if (hasEnoughBuffer()) {
+            finish(true);
+          }
+        };
+
+        const timer = setInterval(check, 100);
+        const timeoutTimer = setTimeout(() => finish(false), timeout);
+
+        video.addEventListener("progress", check);
+        audio.addEventListener("progress", check);
+        video.addEventListener("canplay", check);
+        audio.addEventListener("canplay", check);
+        video.addEventListener("canplaythrough", check);
+        audio.addEventListener("canplaythrough", check);
+        video.addEventListener("loadeddata", check);
+        audio.addEventListener("loadeddata", check);
+
+        check();
+      });
+    }
+
+    async function loadVideo() {
+      if (!videoId) {
+        duration.textContent = "No video id";
+        videoContainer.classList.remove("loading");
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/yt/${videoId}/video?info=1`);
+        const info = await res.json();
+
+        if (!res.ok || info.error) {
+          throw new Error(info.error || `HTTP ${res.status}`);
+        }
+
+        // Set both sources before loading either one. The browser can
+        // fetch/decode them independently and in parallel.
+        video.src = `/api/yt/${videoId}/video`;
+        audio.src = `/api/yt/${videoId}/audio`;
+
+        duration.textContent = `0:00 / ${format(info.duration)}`;
+
+        video.load();
+        audio.load();
+
+        // Remove the loading state only when the video has metadata.
+        // Actual playback is gated by waitForBuffer(), which checks BOTH.
+      } catch (err) {
+        console.error("[player] failed to load:", err);
+        duration.textContent = "Failed to load video";
+        videoContainer.classList.remove("loading");
+      }
+    }
+
+    loadVideo();
+
+    // =========================
+    // Playback
+    // =========================
+
+    function setPlayIcon(isPlaying) {
+      playpause2.innerHTML =
+        `<i data-lucide="${isPlaying ? "pause" : "play"}"></i>`;
+      lucide.createIcons();
+    }
+
+    async function playBoth() {
+      if (playRequest) return playRequest;
+
+      playRequest = (async () => {
+        if (!Number.isFinite(video.currentTime)) {
+          video.currentTime = 0;
+        }
+
+        seeking = true;
+
+        // Put both streams at exactly the same starting point before
+        // allowing either one to play.
+        audio.currentTime = video.currentTime;
+
+        const ready = await waitForBuffer();
+
+        if (!ready) {
+          console.warn("[player] not enough data buffered to start");
+          seeking = false;
+          return;
+        }
+
+        try {
+          // Start both as close together as the browser allows.
+          await Promise.all([
+            video.play(),
+            audio.play()
+          ]);
+
+          setPlayIcon(true);
+          startSync();
+        } catch (err) {
+          console.error("[player] play failed:", err);
+          audio.pause();
+          video.pause();
+          setPlayIcon(false);
+        } finally {
+          seeking = false;
+        }
+      })();
+
+      try {
+        await playRequest;
+      } finally {
+        playRequest = null;
+      }
+    }
+
+    function pauseBoth() {
+      video.pause();
+      audio.pause();
+      stopSync();
+      setPlayIcon(false);
+    }
+
+    function playpause() {
+      if (video.paused) {
+        playBoth();
+      } else {
+        pauseBoth();
+      }
+    }
+
+    // =========================
+    // Synchronization
+    // =========================
+
+    function syncAudio() {
+      if (seeking || video.paused || audio.paused) return;
+      if (!Number.isFinite(video.currentTime)) return;
+      if (!Number.isFinite(audio.currentTime)) return;
+
+      const drift = Math.abs(video.currentTime - audio.currentTime);
+
+      // Do NOT constantly seek audio. That causes clicking and stuttering.
+      // Only correct a genuinely noticeable desync.
+      if (drift > MAX_DRIFT) {
+        audio.currentTime = video.currentTime;
+      }
+    }
+
+    function startSync() {
+      if (syncTimer) return;
+      syncTimer = setInterval(syncAudio, 500);
+    }
+
+    function stopSync() {
+      if (syncTimer) {
+        clearInterval(syncTimer);
+        syncTimer = null;
+      }
+    }
+
+    // =========================
+    // Seeking
+    // =========================
+
+    async function seekBoth(time) {
+      if (!Number.isFinite(time) || !Number.isFinite(video.duration)) {
+        return;
+      }
+
+      time = Math.max(0, Math.min(time, video.duration));
+
+      const wasPlaying = !video.paused;
+
+      seeking = true;
+      stopSync();
+
+      video.pause();
+      audio.pause();
+
+      // Seek both immediately so they request the same section in parallel.
+      video.currentTime = time;
+      audio.currentTime = time;
+
+      // Do not resume until BOTH streams have enough data at the new position.
+      const ready = await waitForBuffer();
+
+      if (ready && wasPlaying) {
+        try {
+          await Promise.all([
+            video.play(),
+            audio.play()
+          ]);
+
+          startSync();
+          setPlayIcon(true);
+        } catch (err) {
+          console.error("[player] resume after seek failed:", err);
+          setPlayIcon(false);
+        }
+      } else if (!wasPlaying) {
+        setPlayIcon(false);
+      }
+
+      seeking = false;
+      sync();
+    }
+
+    // =========================
+    // Video events
+    // =========================
+
+    video.addEventListener("play", () => {
+      setPlayIcon(true);
+
+      // If something outside the custom controls starts the video,
+      // make sure audio follows it.
+      if (audio.paused && !seeking) {
+        audio.currentTime = video.currentTime;
+
+        if (hasEnoughBuffer()) {
+          audio.play().catch(err => {
+            console.warn("[player] audio play failed:", err);
+            video.pause();
+          });
+        } else {
+          video.pause();
+          waitForBuffer().then(ready => {
+            if (ready && !video.paused && !seeking) {
+              audio.currentTime = video.currentTime;
+              audio.play().catch(() => video.pause());
+            }
+          });
+        }
+      }
+
+      startSync();
+    });
+
+    video.addEventListener("pause", () => {
+      audio.pause();
+      stopSync();
+      setPlayIcon(false);
+    });
+
+    // If the master video stalls, stop audio too. This prevents the audio
+    // from running ahead while the video is buffering.
+    video.addEventListener("waiting", () => {
+      if (seeking || video.paused) return;
+
+      audio.pause();
+      stopSync();
+      videoContainer.classList.add("loading");
+    });
+
+    video.addEventListener("playing", async () => {
+      if (seeking) return;
+
+      videoContainer.classList.remove("loading");
+
+      // Re-align only when the video has recovered from a stall.
+      if (Math.abs(video.currentTime - audio.currentTime) > MAX_DRIFT) {
+        audio.currentTime = video.currentTime;
+      }
+
+      if (audio.paused) {
+        try {
+          await waitForBuffer();
+          if (!video.paused && !seeking) {
+            audio.currentTime = video.currentTime;
+            await audio.play();
+          }
+        } catch {}
+      }
+
+      startSync();
+      setPlayIcon(true);
+    });
+
+    video.addEventListener("ended", () => {
+      audio.pause();
+      stopSync();
+      setPlayIcon(false);
+      videoContainer.classList.remove("loading");
+    });
+
+    video.addEventListener("loadedmetadata", () => {
+      videoContainer.classList.remove("loading");
+      sync();
+    });
+
+    video.addEventListener("canplay", () => {
+      // canplay only means the video is playable; playback still waits for
+      // both streams through hasEnoughBuffer()/waitForBuffer().
+      if (!seeking && hasEnoughBuffer()) {
+        videoContainer.classList.remove("loading");
+      }
+    });
+
+    video.addEventListener("error", () => {
+      console.error("[player] video error:", video.error);
+      videoContainer.classList.remove("loading");
+    });
+
+    audio.addEventListener("error", () => {
+      console.error("[player] audio error:", audio.error);
+      videoContainer.classList.remove("loading");
+    });
+
+    // =========================
+    // Progress bar
+    // =========================
+
+    // While dragging, update only the thumb/visual position. Do NOT seek
+    // repeatedly on every mouse movement.
+    progressbar.addEventListener("input", () => {
+      if (!Number.isFinite(video.duration)) return;
+
+      draggingProgress = true;
+
+      const percentage = Number(progressbar.value);
+
+      progressbar.style.setProperty(
+        "--progress",
+        `${percentage}%`
+      );
+
+      duration.textContent =
+        `${format((percentage / 100) * video.duration)} / ${format(video.duration)}`;
+    });
+
+    // Only perform the actual seek once the user releases the slider.
+    progressbar.addEventListener("change", () => {
+      if (!Number.isFinite(video.duration)) return;
+
+      const time =
+        (Number(progressbar.value) / 100) * video.duration;
+
+      draggingProgress = false;
+      seekBoth(time);
+    });
+
+    progressbar.addEventListener("pointerdown", () => {
+      draggingProgress = true;
+    });
+
+    progressbar.addEventListener("pointerup", () => {
+      // "change" handles the actual seek.
+      draggingProgress = false;
+    });
+
+    function sync() {
+      if (!Number.isFinite(video.duration)) return;
+
+      const percentage =
+        Math.max(0, Math.min(100,
+          (video.currentTime / video.duration) * 100
+        ));
+
+      if (!draggingProgress) {
+        progressbar.value = percentage;
+
+        progressbar.style.setProperty(
+          "--progress",
+          `${percentage}%`
+        );
+
+        duration.textContent =
+          `${format(video.currentTime)} / ${format(video.duration)}`;
+      }
+
+      updateMediaSessionPositionState();
+    }
+
+    // timeupdate is the UI clock. The sync loop is ONLY for fixing
+    // meaningful A/V drift.
+    video.addEventListener("timeupdate", sync);
+
+    // =========================
+    // Media Session
+    // =========================
+
+    if ("mediaSession" in navigator) {
+      navigator.mediaSession.setActionHandler(
+        "play",
+        playBoth
+      );
+
+      navigator.mediaSession.setActionHandler(
+        "pause",
+        pauseBoth
+      );
+
+      navigator.mediaSession.setActionHandler(
+        "seekto",
+        details => {
+          if (details.seekTime != null) {
+            seekBoth(details.seekTime);
+          }
+        }
+      );
+
+      navigator.mediaSession.setActionHandler(
+        "seekbackward",
+        details => {
+          seekBoth(
+            video.currentTime - (details.seekOffset || 10)
+          );
+        }
+      );
+
+      navigator.mediaSession.setActionHandler(
+        "seekforward",
+        details => {
+          seekBoth(
+            video.currentTime + (details.seekOffset || 10)
+          );
+        }
+      );
+    }
+
+    function updateMediaSessionPositionState() {
+      if (
+        !("mediaSession" in navigator) ||
+        !("setPositionState" in navigator.mediaSession) ||
+        !Number.isFinite(video.duration) ||
+        video.duration <= 0
+      ) {
+        return;
+      }
+
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: video.duration,
+          playbackRate: 1,
+          position: Math.min(
+            Math.max(video.currentTime, 0),
+            video.duration
+          )
+        });
+      } catch {}
+    }
+
+    // =========================
+    // Time formatting
+    // =========================
+
+    const format = secs => {
+      if (!Number.isFinite(secs) || secs < 0) {
+        return "0:00";
+      }
+
+      const units = [
+        31557600,
+        86400,
+        3600,
+        60,
+        1
+      ];
+
+      const values = [];
+      let remaining = Math.floor(secs);
+
+      for (const u of units) {
+        values.push(Math.floor(remaining / u));
+        remaining %= u;
+      }
+
+      let start = 0;
+
+      while (
+        start < 5 &&
+        values[start] === 0
+      ) {
+        start++;
+      }
+
+      if (start >= 4) {
+        return `0:${String(values[4]).padStart(2, "0")}`;
+      }
+
+      return values
+        .slice(start)
+        .map((v, i) =>
+          i === 0
+            ? String(v)
+            : String(v).padStart(2, "0")
+        )
+        .join(":");
+    };
+
+    // =========================
+    // Volume
+    // =========================
+
+    volume.addEventListener("input", () => {
+      audio.volume = Number(volume.value);
+
+      volume.style.setProperty(
+        "--volume",
+        Number(volume.value) * 100
+      );
+
+      updateVolumeIcon();
+    });
+
+    audio.volume = 1;
+    volume.style.setProperty("--volume", 100);
+
+    function updateVolumeIcon() {
+      const icon =
+        document.getElementById("volume-icon");
+
+      const value = audio.volume;
+
+      const name =
+        value === 0
+          ? "volume-x"
+          : value < 0.5
+            ? "volume-1"
+            : "volume-2";
+
+      icon.setAttribute("data-lucide", name);
+      lucide.createIcons();
+    }
+  </script>
+</body>
+
+</html>

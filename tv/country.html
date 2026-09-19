@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>tv</title>
+        <link rel="stylesheet" href="style.css" />
+        <style>
+            #channels {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+            .channel {
+                border: 1px solid #000;
+                background: #ddd;
+                min-height: 50px;
+                display: flex;
+                align-items: center;
+                gap: 25px;
+                max-width: fit-content;
+                padding: 15px;
+                box-sizing: border-box;
+            }
+            .channellogo {
+                height: 50px;
+                flex-shrink: 0;
+            }
+            .channeltext {
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                gap: 3px;
+            }
+            .channelname {
+                font-size: 1.5em;
+                line-height: 1;
+            }
+            .channelinfo {
+                padding-right: 5px;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>TV</h1>
+        <a href="/"><- Back</a><br>
+        <p>Showing channels in <b id="country">??</b> (<span id="amount">??</span> channel<span id="s">s</span>): <br></p>
+        <p><input id="search" type="search" placeholder="Search channels..." oninput="onSearch()"></p>
+        <div id="channels">
+        </div><br>
+        <p><button onclick="back()" id="back" disabled><</button>
+        page <input id="page" value="1" type="number" min="1" oninput="pageNum()">
+        <button onclick="forward()" id="forward">></button></p>
+        <script src="js/iptv-api.js"></script>
+        <script>
+            const iptv = new IPTVClient({
+                cacheTtl: 60 * 60 * 1000
+            });
+            const url = new URLSearchParams(location.search);
+            let page = 1;
+            let pageMax = 1;
+            let pageLength = 50;
+            let allChannels = []; // everything fetched for this country, unfiltered
+            let channels = [];    // currently displayed (post-search) list
+            (async()=>{
+                let countrycode = (url.get("c") || "US").toUpperCase();
+                let countries = await iptv.getCountries();
+                let country = countries.find(c => c.code === countrycode);
+                if (countrycode === "ALL") {
+                    document.getElementById("country").textContent = "Global 🌐";
+                    allChannels = await iptv.getChannels();
+                    const blocklist = await iptv.getBlocklist();
+                    const blocked = new Set(blocklist.map(b => b.channel));
+                    allChannels = allChannels.filter(c => !blocked.has(c.id) && !c.is_nsfw);
+                    channels = allChannels;
+                } else {
+                    document.getElementById("country").textContent = country
+                        ? `${country.name} ${country.flag}`
+                        : `Unknown (${countrycode})`;
+                    allChannels = await iptv.getChannelsByCountry(countrycode);
+                    const blocklist = await iptv.getBlocklist();
+                    const blocked = new Set(blocklist.map(b => b.channel));
+                    allChannels = allChannels.filter(c => !blocked.has(c.id) && !c.is_nsfw);
+                    channels = allChannels;
+                }
+                channels = allChannels;
+                document.getElementById("amount").textContent = channels.length;
+                if (channels.length === 1) document.getElementById("s").textContent = "";
+                pageMax = Math.max(1, Math.ceil(channels.length / pageLength));
+                document.getElementById("page").setAttribute("max", pageMax);
+
+                // 0 channels means there's nowhere to page to, so lock both buttons
+                if (channels.length === 0) {
+                    document.getElementById("forward").disabled = true;
+                    document.getElementById("back").disabled = true;
+                }
+
+                renderPage();
+            })();
+            function onSearch() {
+                const q = document.getElementById("search").value.trim().toLowerCase();
+                channels = q
+                    ? allChannels.filter(c => {
+                        const names = [c.name, ...(c.alt_names || [])].filter(Boolean);
+                        return names.some(n => n.toLowerCase().includes(q));
+                      })
+                    : allChannels;
+
+                document.getElementById("amount").textContent = channels.length;
+                pageMax = Math.max(1, Math.ceil(channels.length / pageLength));
+                document.getElementById("page").setAttribute("max", pageMax);
+                page = 1;
+                document.getElementById("page").value = 1;
+                updateButtons();
+                renderPage();
+            }
+            function pageNum() {
+                let enteredPage = parseInt(document.getElementById("page").value) || 1;
+                enteredPage = Math.max(enteredPage, 1);
+                enteredPage = Math.min(enteredPage, pageMax);
+                document.getElementById("page").value = enteredPage;
+                page = enteredPage;
+                updateButtons();
+                renderPage();
+            }
+            function forward() {
+                let enteredPage = page+1;
+                enteredPage = Math.max(enteredPage, 1);
+                enteredPage = Math.min(enteredPage, pageMax);
+                document.getElementById("page").value = enteredPage;
+                page = enteredPage;
+                updateButtons();
+                renderPage();
+            }
+            function back() {
+                let enteredPage = page-1;
+                enteredPage = Math.max(enteredPage, 1);
+                enteredPage = Math.min(enteredPage, pageMax);
+                document.getElementById("page").value = enteredPage;
+                page = enteredPage;
+                updateButtons();
+                renderPage();
+            }
+            function updateButtons() {
+                if (channels.length === 0) {
+                    document.getElementById("forward").disabled = true;
+                    document.getElementById("back").disabled = true;
+                    return;
+                }
+                document.getElementById("forward").disabled = (page === pageMax);
+                document.getElementById("back").disabled = (page === 1);
+            }
+
+            let renderToken = 0;
+            async function renderPage() {
+                const myToken = ++renderToken; // lets us ignore stale/overlapping renders
+                const container = document.getElementById("channels");
+                container.textContent = ""; // clear previous page immediately
+
+                const index = (page - 1) * pageLength;
+                const pageChannels = channels.slice(index, index + pageLength);
+                if (pageChannels.length === 0) return;
+
+                const fullChannels = await iptv.getPlayableChannels(pageChannels.map(c => c.id));
+                if (myToken !== renderToken) return; // a newer renderPage() call has since started
+
+                fullChannels.forEach(renderChannel);
+            }
+            function renderChannel(channel) {
+                const container = document.getElementById("channels");
+
+                const div = document.createElement("div");
+                div.className = "channel";
+
+                if (channel.logo) {
+                    const img = document.createElement("img");
+                    img.className = "channellogo";
+                    img.src = "/api/image?url=" + encodeURI(channel.logo);
+                    img.alt = channel.name;
+                    div.appendChild(img);
+                }
+
+                const textWrap = document.createElement("div");
+                textWrap.className = "channeltext";
+
+                const nameSpan = document.createElement("a");
+                nameSpan.className = "channelname";
+                nameSpan.textContent = channel.name;
+                nameSpan.href = "channel.html?c=" + channel.id;
+                textWrap.appendChild(nameSpan);
+
+                const infoSpan = document.createElement("span");
+                infoSpan.className = "channelinfo";
+                channel.categories = channel.categories.map(c => 
+                    c.charAt(0).toUpperCase() + c.slice(1).toLowerCase()
+                )
+                const categories = (channel.categories || []).join(", ") || "Uncategorized";
+                const host = channel.network ? `Hosted by ${channel.network}, c` : "C";
+                infoSpan.textContent = `${host}ategories include: ${categories}`;
+                textWrap.appendChild(infoSpan);
+
+                div.appendChild(textWrap);
+                container.appendChild(div);
+            }
+        </script>
+    </body>
+</html>

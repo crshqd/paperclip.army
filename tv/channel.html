@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>tv</title>
+        <link rel="stylesheet" href="style.css" />
+    </head>
+    <body>
+        <h1>TV</h1>
+        <a href="#" onclick="back()"><- Back</a><br>
+        <p>Showing <b id="amount">0</b> stream<span id="s">s</span> for <b id="name">??</b>:<br></p>
+        <ul id="streams">
+        </ul>
+        <script src="js/iptv-api.js"></script>
+        <script>
+            const iptv = new IPTVClient({
+                cacheTtl: 60 * 60 * 1000
+            });
+            const url = new URLSearchParams(location.search);
+            (async()=>{
+                let channelid = url.get("c") || "00sReplay.us";
+                let channel = await iptv.getPlayableChannel(channelid);
+                console.log(channel);
+                document.getElementById("name").textContent = channel.name;
+                let streams = await iptv.getStreamsForChannel(channelid);
+                console.log(streams)
+                document.getElementById("amount").textContent = streams.length;
+                if (streams.length === 1) document.getElementById("s").textContent = "";
+                for (let i = 0; i < streams.length; i++) {
+                    let stream = streams[i];
+                    let tempelem = document.createElement("li");
+                    let tempelem2 = document.createElement("a");
+                    let tempelem3 = document.createElement("b");
+                    tempelem3.textContent = stream.title;
+                    tempelem2.appendChild(tempelem3);
+                    tempelem2.insertAdjacentText('beforeend', ` in ${stream.feed || ""} ${stream.quality || ""}${stream.label ? ` • ${stream.label}` : ""}`);
+                    tempelem2.href = `stream.html?c=${channelid}&f=${i}`;
+                    tempelem.appendChild(tempelem2);
+                    document.getElementById("streams").appendChild(tempelem);
+                }
+            })();
+            function back() {
+                history.back();
+            }
+        </script>
+    </body>
+</html>

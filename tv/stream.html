@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>tv</title>
+        <style>
+            video {
+                border: 1px solid #000;
+                background: black;
+            }
+        </style>
+        <link rel="stylesheet" href="style.css" />
+    </head>
+    <body>
+        <h1>TV</h1>
+        <a href="#" onclick="back()"><- Back</a><br>
+        <p>Playing <b id="stream">?? in ??</b>:<br>
+        <video width="864" height="576" id="video" controls></video></p>
+        <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+        <script src="js/iptv-api.js"></script>
+        <script>
+            const iptv = new IPTVClient({
+                cacheTtl: 60 * 60 * 1000
+            });
+            const proxy = "/api/m3u8";
+            const url = new URLSearchParams(location.search);
+            (async()=>{
+                let channelid = url.get("c") || "00sReplay.us";
+                let channel = await iptv.getPlayableChannel(channelid);
+                console.log(channel);
+                let streams = await iptv.getStreamsForChannel(channelid);
+                console.log(streams);
+                let stream = streams[parseInt(url.get("f") || 0)];
+                document.getElementById("stream").textContent = `${stream.title} in ${stream.feed || ""} ${stream.quality || ""}${stream.label ? ` • ${stream.label}` : ""}`;
+                const video = document.getElementById('video');
+                const streamUrl = buildProxyUrl(stream.url, stream.referrer, stream.userAgent);
+                if (Hls.isSupported()) {
+                    const hls = new Hls();
+                    hls.loadSource(streamUrl);
+                    hls.attachMedia(video);
+                    video.mute = true;
+                    video.autoplay = true;
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = streamUrl;
+                    video.mute = true;
+                    video.autoplay = true;
+                }
+            })();
+            function back() {
+                history.back();
+            }
+            function buildProxyUrl(targetUrl, referrer, userAgent) {
+                const params = new URLSearchParams({ url: targetUrl });
+                if (referrer) params.set('referer', referrer);
+                if (userAgent) params.set('ua', userAgent);
+                return `${proxy}?${params.toString()}`;
+            }
+        </script>
+    </body>
+</html>
